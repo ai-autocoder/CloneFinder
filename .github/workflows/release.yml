@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MinGW-w64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+          update: true
+
+      - name: Compile resource
+        shell: msys2 {0}
+        run: windres clone-finder.rc -o clone-finder-res.o
+
+      - name: Build exe
+        shell: msys2 {0}
+        run: |
+          g++ -O2 -std=c++17 -static -mwindows \
+            clone-finder.cpp clone-finder-res.o \
+            -o clone-finder.exe \
+            -lcomctl32 -lcomdlg32 -lole32 -luuid -lshell32 -pthread
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: clone-finder.exe
+          generate_release_notes: true

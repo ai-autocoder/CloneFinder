@@ -1,0 +1,4 @@
+mingw64
+*.exe
+*.o
+clone-finder.ini

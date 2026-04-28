@@ -168,6 +168,7 @@ enum : int {
     IDC_ADD_FOLDER    = 1004,
     IDC_REMOVE_FOLDER = 1005,
     IDC_EXT_EDIT      = 1006,
+    IDC_EDIT_FOLDER   = 1013,
     IDC_RECURSIVE     = 1007,
     IDC_START         = 1008,
     IDC_CANCEL        = 1009,
@@ -328,6 +329,153 @@ static std::string pickFile(HWND owner) {
 }
 
 // ------------------------------------------------------------
+// Folder add/edit modal dialog (in-memory DLGTEMPLATE)
+// ------------------------------------------------------------
+
+static constexpr WORD IDC_DLG_EDIT_PATH  = 2001;
+static constexpr WORD IDC_DLG_BROWSE_BTN = 2002;
+
+static void dlgAppendWord(std::vector<BYTE> &v, WORD w) {
+    v.push_back(static_cast<BYTE>(w & 0xFF));
+    v.push_back(static_cast<BYTE>((w >> 8) & 0xFF));
+}
+static void dlgAppendDword(std::vector<BYTE> &v, DWORD d) {
+    for (int i = 0; i < 4; ++i)
+        v.push_back(static_cast<BYTE>((d >> (i * 8)) & 0xFF));
+}
+static void dlgAppendShort(std::vector<BYTE> &v, short s) {
+    dlgAppendWord(v, static_cast<WORD>(s));
+}
+static void dlgAppendUtf16(std::vector<BYTE> &v, const char *s) {
+    while (*s) {
+        dlgAppendWord(v, static_cast<WORD>(static_cast<unsigned char>(*s)));
+        ++s;
+    }
+    dlgAppendWord(v, 0);
+}
+static void dlgAlignDword(std::vector<BYTE> &v) {
+    while (v.size() % 4) v.push_back(0);
+}
+
+static void dlgAppendControl(std::vector<BYTE> &v,
+                             DWORD style, DWORD exStyle,
+                             short x, short y, short cx, short cy,
+                             WORD id, WORD classAtom, const char *text) {
+    dlgAlignDword(v);
+    dlgAppendDword(v, style);
+    dlgAppendDword(v, exStyle);
+    dlgAppendShort(v, x);
+    dlgAppendShort(v, y);
+    dlgAppendShort(v, cx);
+    dlgAppendShort(v, cy);
+    dlgAppendWord(v, id);
+    dlgAppendWord(v, 0xFFFF);
+    dlgAppendWord(v, classAtom);
+    dlgAppendUtf16(v, text);
+    dlgAppendWord(v, 0);
+}
+
+static INT_PTR CALLBACK promptDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_INITDIALOG: {
+        SetWindowLongPtrA(hDlg, GWLP_USERDATA, static_cast<LONG_PTR>(lParam));
+        std::string *p = reinterpret_cast<std::string*>(lParam);
+        if (p && !p->empty()) SetDlgItemTextA(hDlg, IDC_DLG_EDIT_PATH, p->c_str());
+        HWND hEdit = GetDlgItem(hDlg, IDC_DLG_EDIT_PATH);
+        SendMessageA(hEdit, EM_SETSEL, 0, -1);
+        SetFocus(hEdit);
+        return FALSE;
+    }
+    case WM_COMMAND: {
+        int id = LOWORD(wParam);
+        if (id == IDOK) {
+            char buf[4096] = {};
+            GetDlgItemTextA(hDlg, IDC_DLG_EDIT_PATH, buf, sizeof(buf));
+            std::string s = buf;
+            size_t a = s.find_first_not_of(" \t\r\n");
+            size_t b = s.find_last_not_of(" \t\r\n");
+            s = (a == std::string::npos) ? std::string() : s.substr(a, b - a + 1);
+            if (s.empty()) {
+                MessageBoxA(hDlg, "Please enter a folder path or wildcard pattern.",
+                            "Empty input", MB_ICONWARNING);
+                return TRUE;
+            }
+            std::string *out = reinterpret_cast<std::string*>(
+                GetWindowLongPtrA(hDlg, GWLP_USERDATA));
+            if (out) *out = s;
+            EndDialog(hDlg, IDOK);
+            return TRUE;
+        }
+        if (id == IDCANCEL) {
+            EndDialog(hDlg, IDCANCEL);
+            return TRUE;
+        }
+        if (id == IDC_DLG_BROWSE_BTN) {
+            std::string s = pickFolder(hDlg);
+            if (!s.empty()) SetDlgItemTextA(hDlg, IDC_DLG_EDIT_PATH, s.c_str());
+            return TRUE;
+        }
+        return FALSE;
+    }
+    }
+    return FALSE;
+}
+
+static bool promptForFolder(HWND owner, std::string &inout) {
+    std::vector<BYTE> tpl;
+    tpl.reserve(512);
+
+    DWORD style = DS_MODALFRAME | DS_SETFONT | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    dlgAppendDword(tpl, style);
+    dlgAppendDword(tpl, 0);
+    dlgAppendWord(tpl, 5);
+    dlgAppendShort(tpl, 0);
+    dlgAppendShort(tpl, 0);
+    dlgAppendShort(tpl, 280);
+    dlgAppendShort(tpl, 60);
+    dlgAppendWord(tpl, 0);
+    dlgAppendWord(tpl, 0);
+    dlgAppendUtf16(tpl, inout.empty() ? "Add folder" : "Edit folder");
+    dlgAppendWord(tpl, 8);
+    dlgAppendUtf16(tpl, "MS Shell Dlg");
+
+    dlgAppendControl(tpl,
+        WS_CHILD | WS_VISIBLE | SS_LEFT, 0,
+        7, 7, 200, 8, 0xFFFF, 0x0082,
+        "Path or wildcard pattern:");
+
+    dlgAppendControl(tpl,
+        WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, 0,
+        7, 18, 215, 14, IDC_DLG_EDIT_PATH, 0x0081, "");
+
+    dlgAppendControl(tpl,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 0,
+        226, 18, 47, 14, IDC_DLG_BROWSE_BTN, 0x0080, "Browse...");
+
+    dlgAppendControl(tpl,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 0,
+        166, 40, 50, 14, IDOK, 0x0080, "OK");
+
+    dlgAppendControl(tpl,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 0,
+        222, 40, 50, 14, IDCANCEL, 0x0080, "Cancel");
+
+    INT_PTR r = DialogBoxIndirectParamA(
+        GetModuleHandleA(nullptr),
+        reinterpret_cast<LPCDLGTEMPLATEA>(tpl.data()),
+        owner,
+        promptDlgProc,
+        reinterpret_cast<LPARAM>(&inout));
+    return r == IDOK;
+}
+
+static void updateFolderButtons() {
+    BOOL hasSel = (SendMessage(g.hFolders, LB_GETCURSEL, 0, 0) != LB_ERR);
+    EnableWindow(GetDlgItem(g.hMain, IDC_EDIT_FOLDER),   hasSel);
+    EnableWindow(GetDlgItem(g.hMain, IDC_REMOVE_FOLDER), hasSel);
+}
+
+// ------------------------------------------------------------
 // ListView
 // ------------------------------------------------------------
 
@@ -421,7 +569,8 @@ static void layout(HWND hwnd) {
     const int listH = 100;
     SetWindowPos(g.hFolders, nullptr, M, y, W - 3*M - BTN_W, listH, SWP_NOZORDER);
     SetWindowPos(GetDlgItem(hwnd, IDC_ADD_FOLDER), nullptr, W - M - BTN_W, y, BTN_W, BTN_H, SWP_NOZORDER);
-    SetWindowPos(GetDlgItem(hwnd, IDC_REMOVE_FOLDER), nullptr, W - M - BTN_W, y + BTN_H + 4, BTN_W, BTN_H, SWP_NOZORDER);
+    SetWindowPos(GetDlgItem(hwnd, IDC_EDIT_FOLDER), nullptr, W - M - BTN_W, y + BTN_H + 4, BTN_W, BTN_H, SWP_NOZORDER);
+    SetWindowPos(GetDlgItem(hwnd, IDC_REMOVE_FOLDER), nullptr, W - M - BTN_W, y + 2*(BTN_H + 4), BTN_W, BTN_H, SWP_NOZORDER);
     y += listH + 8;
 
     // Extension / Recursive row
@@ -522,6 +671,7 @@ static void loadConfig() {
             token += *p;
         }
     }
+    updateFolderButtons();
 }
 
 // ------------------------------------------------------------
@@ -557,8 +707,11 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         CreateWindowA("BUTTON", "Add...",
             WS_CHILD|WS_VISIBLE|WS_TABSTOP,
             0,0,10,10, hwnd, (HMENU)(INT_PTR)IDC_ADD_FOLDER, nullptr, nullptr);
+        CreateWindowA("BUTTON", "Edit...",
+            WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_DISABLED,
+            0,0,10,10, hwnd, (HMENU)(INT_PTR)IDC_EDIT_FOLDER, nullptr, nullptr);
         CreateWindowA("BUTTON", "Remove",
-            WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+            WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_DISABLED,
             0,0,10,10, hwnd, (HMENU)(INT_PTR)IDC_REMOVE_FOLDER, nullptr, nullptr);
 
         makeLabel(hwnd, "Extension:", IDC_LBL_EXT);
@@ -622,12 +775,47 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (!s.empty()) SetWindowTextA(g.hTarget, s.c_str());
         }
         else if (id == IDC_ADD_FOLDER) {
-            std::string s = pickFolder(hwnd);
-            if (!s.empty()) SendMessageA(g.hFolders, LB_ADDSTRING, 0, (LPARAM)s.c_str());
+            std::string s;
+            if (promptForFolder(hwnd, s)) {
+                int idx = (int)SendMessageA(g.hFolders, LB_ADDSTRING, 0, (LPARAM)s.c_str());
+                if (idx != LB_ERR) SendMessage(g.hFolders, LB_SETCURSEL, idx, 0);
+                updateFolderButtons();
+            }
+        }
+        else if (id == IDC_EDIT_FOLDER) {
+            int sel = (int)SendMessage(g.hFolders, LB_GETCURSEL, 0, 0);
+            if (sel != LB_ERR) {
+                int len = (int)SendMessage(g.hFolders, LB_GETTEXTLEN, sel, 0);
+                std::vector<char> fb(len + 1, 0);
+                SendMessageA(g.hFolders, LB_GETTEXT, sel, (LPARAM)fb.data());
+                std::string s(fb.data());
+                if (promptForFolder(hwnd, s)) {
+                    SendMessage(g.hFolders, LB_DELETESTRING, sel, 0);
+                    SendMessageA(g.hFolders, LB_INSERTSTRING, sel, (LPARAM)s.c_str());
+                    SendMessage(g.hFolders, LB_SETCURSEL, sel, 0);
+                    updateFolderButtons();
+                }
+            }
         }
         else if (id == IDC_REMOVE_FOLDER) {
             int sel = (int)SendMessage(g.hFolders, LB_GETCURSEL, 0, 0);
-            if (sel != LB_ERR) SendMessage(g.hFolders, LB_DELETESTRING, sel, 0);
+            if (sel != LB_ERR) {
+                SendMessage(g.hFolders, LB_DELETESTRING, sel, 0);
+                int count = (int)SendMessage(g.hFolders, LB_GETCOUNT, 0, 0);
+                if (count > 0) {
+                    int next = sel < count ? sel : count - 1;
+                    SendMessage(g.hFolders, LB_SETCURSEL, next, 0);
+                }
+                updateFolderButtons();
+            }
+        }
+        else if (id == IDC_FOLDERS_LIST) {
+            if (code == LBN_DBLCLK) {
+                SendMessageA(hwnd, WM_COMMAND,
+                             MAKEWPARAM(IDC_EDIT_FOLDER, BN_CLICKED), 0);
+            } else if (code == LBN_SELCHANGE) {
+                updateFolderButtons();
+            }
         }
         else if (id == IDC_START) {
             if (g.running) return 0;

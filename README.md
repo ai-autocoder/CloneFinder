@@ -14,7 +14,7 @@ Click **Browse...** next to the *Target file* field and select the file you want
 
 ### 2. Add search folders
 
-Click **Add...** to add one or more folder paths to scan. Remove a selected entry with **Remove**.
+Click **Add...** to open the folder dialog, where you can either type a path directly or click **Browse...** to use the folder picker. Click **Edit...** (or double-click an entry) to modify an existing path. Click **Remove** to delete the selected entry.
 
 Folders support a single `*` wildcard segment, e.g.:
 
@@ -22,9 +22,7 @@ Folders support a single `*` wildcard segment, e.g.:
 C:\Projects\*\src
 ```
 
-This expands to every direct subfolder of `C:\Projects\` that contains a `src` sub-path, so new version folders are picked up automatically.
-
-Multiple folders can also be typed directly into `clone-finder.ini` separated by `|`.
+This expands to every direct subfolder of `C:\Projects\` that contains a `src` sub-path, so new version folders are picked up automatically. Wildcard patterns can be typed directly in the Add/Edit dialog.
 
 ### 3. Set extension and recursion
 

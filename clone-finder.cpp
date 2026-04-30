@@ -23,6 +23,7 @@
 #include <memory>
 #include <sstream>
 #include <cstring>
+#include <cstdio>
 
 // ============================================================
 // Core comparison logic
@@ -33,6 +34,7 @@ struct ComparisonResult {
     int differentLines = 0;
     int linesAdded = 0;
     int linesRemoved = 0;
+    double similarity = 0.0;
 };
 
 static std::vector<std::string> splitIntoNormalizedLines(const std::string &content) {
@@ -99,6 +101,13 @@ static ComparisonResult compareAgainstTarget(const std::string &otherFile,
     ComparisonResult r;
     r.filePath = otherFile;
     computeDiffCounts(targetLines, otherLines, r.differentLines, r.linesAdded, r.linesRemoved);
+    size_t targetLineCount = targetLines.size();
+    if (targetLineCount == 0) {
+        r.similarity = 0.0;
+    } else {
+        double ratio = (double)r.differentLines / (double)targetLineCount;
+        r.similarity = (ratio >= 1.0) ? 0.0 : (1.0 - ratio) * 100.0;
+    }
     return r;
 }
 
@@ -193,8 +202,8 @@ struct AppState {
     HWND hResults = nullptr;
     HFONT hFont = nullptr;
 
-    int  sortCol = 1;   // 0=File 1=DiffLines 2=Added 3=Removed
-    bool sortAsc = true;
+    int  sortCol = 1;   // 0=File 1=Similarity 2=DiffLines 3=Added 4=Removed
+    bool sortAsc = false;
 
     std::vector<ComparisonResult> allResults;
     std::atomic<bool> cancelRequested{false};
@@ -483,12 +492,13 @@ static void setupListView(HWND lv) {
     ListView_SetExtendedListViewStyle(lv,
         LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
     struct { const char *name; int width; } cols[] = {
-        {"File",        520},
-        {"Diff Lines",  90},
-        {"Added",       80},
-        {"Removed",     80},
+        {"File",          520},
+        {"Similarity %",   90},
+        {"Diff Lines",     90},
+        {"Added",          80},
+        {"Removed",        80},
     };
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         LVCOLUMNA c = {};
         c.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
         c.pszText = const_cast<LPSTR>(cols[i].name);
@@ -520,8 +530,9 @@ static void populateResults(HWND lv, const std::vector<ComparisonResult> &result
         const ComparisonResult *x = asc ? a : b;
         const ComparisonResult *y = asc ? b : a;
         switch (col) {
-            case 2:  return x->linesAdded     < y->linesAdded;
-            case 3:  return x->linesRemoved   < y->linesRemoved;
+            case 1:  return x->similarity     < y->similarity;
+            case 3:  return x->linesAdded     < y->linesAdded;
+            case 4:  return x->linesRemoved   < y->linesRemoved;
             case 0:  return x->filePath       < y->filePath;
             default: return x->differentLines < y->differentLines;
         }
@@ -536,9 +547,10 @@ static void populateResults(HWND lv, const std::vector<ComparisonResult> &result
         it.pszText = const_cast<LPSTR>(r.filePath.c_str());
         int idx = ListView_InsertItem(lv, &it);
         char num[32];
-        wsprintfA(num, "%d", r.differentLines); ListView_SetItemText(lv, idx, 1, num);
-        wsprintfA(num, "%d", r.linesAdded);     ListView_SetItemText(lv, idx, 2, num);
-        wsprintfA(num, "%d", r.linesRemoved);   ListView_SetItemText(lv, idx, 3, num);
+        snprintf(num, sizeof(num), "%.1f%%", r.similarity); ListView_SetItemText(lv, idx, 1, num);
+        wsprintfA(num, "%d", r.differentLines);             ListView_SetItemText(lv, idx, 2, num);
+        wsprintfA(num, "%d", r.linesAdded);                 ListView_SetItemText(lv, idx, 3, num);
+        wsprintfA(num, "%d", r.linesRemoved);               ListView_SetItemText(lv, idx, 4, num);
     }
     SendMessageA(lv, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(lv, nullptr, TRUE);
@@ -625,8 +637,8 @@ static void saveConfig() {
 
     char sortNum[4];
     wsprintfA(sortNum, "%d", g.sortCol);
-    WritePrivateProfileStringA(sec, "SortCol", sortNum, ini.c_str());
-    WritePrivateProfileStringA(sec, "SortAsc", g.sortAsc ? "1" : "0", ini.c_str());
+    WritePrivateProfileStringA(sec, "SortColumn",    sortNum, ini.c_str());
+    WritePrivateProfileStringA(sec, "SortAscending", g.sortAsc ? "1" : "0", ini.c_str());
 
     int count = (int)SendMessage(g.hFolders, LB_GETCOUNT, 0, 0);
     std::string folders;
@@ -654,8 +666,8 @@ static void loadConfig() {
     int rec = GetPrivateProfileIntA(sec, "Recursive", 1, ini.c_str());
     SendMessage(g.hRecursive, BM_SETCHECK, rec ? BST_CHECKED : BST_UNCHECKED, 0);
 
-    g.sortCol = GetPrivateProfileIntA(sec, "SortCol", 1, ini.c_str());
-    g.sortAsc = GetPrivateProfileIntA(sec, "SortAsc", 1, ini.c_str()) != 0;
+    g.sortCol = GetPrivateProfileIntA(sec, "SortColumn",    1, ini.c_str());
+    g.sortAsc = GetPrivateProfileIntA(sec, "SortAscending", 0, ini.c_str()) != 0;
 
     GetPrivateProfileStringA(sec, "Folders", "", buf, sizeof(buf), ini.c_str());
     SendMessage(g.hFolders, LB_RESETCONTENT, 0, 0);

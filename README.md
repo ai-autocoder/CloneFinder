@@ -41,7 +41,7 @@ Click **Start**. The progress bar tracks comparison progress. Click **Cancel** t
 | **Double-click** a row | Opens the file in its associated application. |
 | **Right-click** a row | Copies the full file path to the clipboard. |
 
-Sortable columns: **File** (alphabetical), **Diff Lines** (added + removed), **Added**, **Removed**.
+Sortable columns: **File** (alphabetical), **Similarity %**, **Diff Lines** (added + removed), **Added**, **Removed**.
 
 ---
 
@@ -54,16 +54,16 @@ All settings are saved automatically to `clone-finder.ini` (next to the `.exe`) 
 TargetFile=C:/path/to/file.htm
 Extension=.htm
 Recursive=1
-SortCol=1
-SortAsc=1
+SortColumn=1
+SortAscending=0
 Folders=C:/Projects/*/src|C:/other/path/
 ```
 
 | Key | Values |
 |-----|--------|
 | `Recursive` | `1` = recursive, `0` = top-level only |
-| `SortCol` | `0` = File, `1` = Diff Lines, `2` = Added, `3` = Removed |
-| `SortAsc` | `1` = ascending, `0` = descending |
+| `SortColumn` | `0` = File, `1` = Similarity %, `2` = Diff Lines, `3` = Added, `4` = Removed |
+| `SortAscending` | `1` = ascending, `0` = descending |
 | `Folders` | Pipe-separated list of paths; `*` wildcard supported in one segment |
 
 ---
@@ -72,6 +72,7 @@ Folders=C:/Projects/*/src|C:/other/path/
 
 The tool computes an LCS between the normalized lines of the target file and each candidate file:
 
+- **Similarity %** = `max(0, 1 − Diff Lines / target line count) × 100` — 100% means identical, 0% means no overlap (or more diff lines than the target has lines). This is the default sort column, descending, so the best matches appear first.
 - **Diff Lines** = lines added + lines removed (lower = more similar)
 - **Added** = lines in the candidate not in the target
 - **Removed** = lines in the target not in the candidate
